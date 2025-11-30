@@ -14,13 +14,42 @@ import { db } from '../config/firebase';
 import { useAuth } from '../context/AuthContext';
 import { FoodEntry } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+
+interface WorkoutEntry {
+  id: string;
+  type: 'workout';
+  userId: string;
+  workoutType: string;
+  name: string;
+  duration: number;
+  caloriesBurned: number;
+  timestamp: Date;
+}
+
+interface FoodEntryWithType extends FoodEntry {
+  type: 'food';
+}
+
+type HistoryEntry = FoodEntryWithType | WorkoutEntry;
 
 interface DayGroup {
   date: string;
   displayDate: string;
-  entries: FoodEntry[];
+  entries: HistoryEntry[];
   totalCalories: number;
+  totalBurned: number;
 }
+
+// Workout type icons and colors
+const WORKOUT_STYLES: Record<string, { icon: string; color: string }> = {
+  run: { icon: 'walk', color: '#FF6B6B' },
+  cycle: { icon: 'bicycle', color: '#4ECDC4' },
+  swim: { icon: 'water', color: '#45B7D1' },
+  weights: { icon: 'barbell', color: '#96CEB4' },
+  yoga: { icon: 'body', color: '#DDA0DD' },
+  hiit: { icon: 'flame', color: '#FF8C42' },
+};
 
 export default function HistoryScreen() {
   const { user } = useAuth();
@@ -36,21 +65,23 @@ export default function HistoryScreen() {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
+      // Fetch food entries
       const entriesRef = collection(db, 'foodEntries');
-      const q = query(
+      const foodQuery = query(
         entriesRef,
         where('userId', '==', user.uid)
       );
 
-      const snapshot = await getDocs(q);
-      const entries: FoodEntry[] = [];
+      const foodSnapshot = await getDocs(foodQuery);
+      const allEntries: HistoryEntry[] = [];
 
-      snapshot.forEach((docSnap) => {
+      foodSnapshot.forEach((docSnap) => {
         const data = docSnap.data();
         const timestamp = data.timestamp?.toDate?.() || new Date(data.timestamp);
         
         if (timestamp >= thirtyDaysAgo) {
-          entries.push({
+          allEntries.push({
+            type: 'food',
             id: docSnap.id,
             userId: data.userId,
             name: data.name,
@@ -62,24 +93,58 @@ export default function HistoryScreen() {
         }
       });
 
-      entries.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      // Fetch workouts
+      const workoutsRef = collection(db, 'workouts');
+      const workoutQuery = query(
+        workoutsRef,
+        where('userId', '==', user.uid)
+      );
+
+      const workoutSnapshot = await getDocs(workoutQuery);
+
+      workoutSnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const timestamp = data.timestamp?.toDate?.() || new Date(data.timestamp);
+        
+        if (timestamp >= thirtyDaysAgo) {
+          allEntries.push({
+            type: 'workout',
+            id: docSnap.id,
+            userId: data.userId,
+            workoutType: data.type,
+            name: data.name,
+            duration: data.duration,
+            caloriesBurned: data.caloriesBurned,
+            timestamp: timestamp,
+          });
+        }
+      });
+
+      // Sort all entries by timestamp
+      allEntries.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
       // Group entries by date
       const groups: Map<string, DayGroup> = new Map();
 
-      entries.forEach((entry) => {
+      allEntries.forEach((entry) => {
         const dateKey = entry.timestamp.toISOString().split('T')[0];
         const existing = groups.get(dateKey);
 
+        const isWorkout = entry.type === 'workout';
+        const calories = isWorkout ? 0 : (entry as FoodEntryWithType).calories;
+        const burned = isWorkout ? (entry as WorkoutEntry).caloriesBurned : 0;
+
         if (existing) {
           existing.entries.push(entry);
-          existing.totalCalories += entry.calories;
+          existing.totalCalories += calories;
+          existing.totalBurned += burned;
         } else {
           groups.set(dateKey, {
             date: dateKey,
             displayDate: formatDisplayDate(entry.timestamp),
             entries: [entry],
-            totalCalories: entry.calories,
+            totalCalories: calories,
+            totalBurned: burned,
           });
         }
       });
@@ -125,10 +190,14 @@ export default function HistoryScreen() {
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   };
 
-  const handleDeleteEntry = async (entryId: string) => {
+  const handleDeleteEntry = async (entry: HistoryEntry) => {
+    const isWorkout = entry.type === 'workout';
+    const collectionName = isWorkout ? 'workouts' : 'foodEntries';
+    const entryType = isWorkout ? 'workout' : 'food entry';
+    
     Alert.alert(
       'Delete Entry',
-      'Are you sure you want to delete this food entry?',
+      `Are you sure you want to delete this ${entryType}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -136,7 +205,7 @@ export default function HistoryScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, 'foodEntries', entryId));
+              await deleteDoc(doc(db, collectionName, entry.id));
               await fetchHistory();
             } catch (error) {
               console.error('Error deleting entry:', error);
@@ -148,8 +217,20 @@ export default function HistoryScreen() {
     );
   };
 
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    if (mins < 60) return `${mins} min`;
+    const hrs = Math.floor(mins / 60);
+    const remainingMins = mins % 60;
+    return `${hrs}h ${remainingMins}m`;
+  };
+
   const totalDays = dayGroups.length;
   const totalCalories = dayGroups.reduce((sum, day) => sum + day.totalCalories, 0);
+  const totalBurned = dayGroups.reduce((sum, day) => sum + day.totalBurned, 0);
+  const totalWorkouts = dayGroups.reduce((sum, day) => 
+    sum + day.entries.filter(e => e.type === 'workout').length, 0
+  );
   const avgCalories = totalDays > 0 ? Math.round(totalCalories / totalDays) : 0;
 
   return (
@@ -180,12 +261,20 @@ export default function HistoryScreen() {
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
-            <Text style={styles.statValue}>
-              {dayGroups.reduce((sum, day) => sum + day.entries.length, 0)}
-            </Text>
-            <Text style={styles.statLabel}>Total meals</Text>
+            <Text style={styles.statValue}>{totalWorkouts}</Text>
+            <Text style={styles.statLabel}>Workouts</Text>
           </View>
         </View>
+
+        {/* Burned calories banner */}
+        {totalBurned > 0 && (
+          <View style={styles.burnedBanner}>
+            <Ionicons name="flame" size={20} color="#FF6B6B" />
+            <Text style={styles.burnedText}>
+              <Text style={styles.burnedValue}>{totalBurned}</Text> calories burned this month
+            </Text>
+          </View>
+        )}
 
         {loading ? (
           <View style={styles.emptyState}>
@@ -204,32 +293,71 @@ export default function HistoryScreen() {
             <View key={dayGroup.date} style={styles.daySection}>
               <View style={styles.dayHeader}>
                 <Text style={styles.dayTitle}>{dayGroup.displayDate}</Text>
-                <View style={styles.dayCalories}>
-                  <Text style={styles.dayCaloriesValue}>{dayGroup.totalCalories}</Text>
-                  <Text style={styles.dayCaloriesUnit}> kcal</Text>
+                <View style={styles.dayStats}>
+                  {dayGroup.totalBurned > 0 && (
+                    <View style={styles.dayBurned}>
+                      <Ionicons name="flame" size={14} color="#FF6B6B" />
+                      <Text style={styles.dayBurnedValue}>-{dayGroup.totalBurned}</Text>
+                    </View>
+                  )}
+                  <View style={styles.dayCalories}>
+                    <Text style={styles.dayCaloriesValue}>{dayGroup.totalCalories}</Text>
+                    <Text style={styles.dayCaloriesUnit}> kcal</Text>
+                  </View>
                 </View>
               </View>
 
-              {dayGroup.entries.map((entry) => (
-                <TouchableOpacity
-                  key={entry.id}
-                  style={styles.entryCard}
-                  onLongPress={() => handleDeleteEntry(entry.id)}
-                >
-                  {entry.photoUrl ? (
-                    <Image source={{ uri: entry.photoUrl }} style={styles.entryImage} />
-                  ) : (
-                    <View style={[styles.entryImage, styles.entryImagePlaceholder]}>
-                      <Text style={styles.entryImagePlaceholderText}>🍽️</Text>
+              {dayGroup.entries.map((entry) => {
+                if (entry.type === 'workout') {
+                  const workout = entry as WorkoutEntry;
+                  const workoutStyle = WORKOUT_STYLES[workout.workoutType] || { icon: 'fitness', color: '#666' };
+                  
+                  return (
+                    <TouchableOpacity
+                      key={entry.id}
+                      style={styles.entryCard}
+                      onLongPress={() => handleDeleteEntry(entry)}
+                    >
+                      <View style={[styles.workoutIcon, { backgroundColor: workoutStyle.color + '20' }]}>
+                        <Ionicons name={workoutStyle.icon as any} size={24} color={workoutStyle.color} />
+                      </View>
+                      <View style={styles.entryInfo}>
+                        <Text style={styles.entryName}>{workout.name}</Text>
+                        <Text style={styles.entryTime}>
+                          {formatDuration(workout.duration)} • {formatTime(workout.timestamp)}
+                        </Text>
+                      </View>
+                      <View style={styles.burnedCalories}>
+                        <Ionicons name="flame" size={14} color="#FF6B6B" />
+                        <Text style={styles.burnedCaloriesText}>-{workout.caloriesBurned}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                }
+                
+                // Food entry
+                const food = entry as FoodEntryWithType;
+                return (
+                  <TouchableOpacity
+                    key={entry.id}
+                    style={styles.entryCard}
+                    onLongPress={() => handleDeleteEntry(entry)}
+                  >
+                    {food.photoUrl ? (
+                      <Image source={{ uri: food.photoUrl }} style={styles.entryImage} />
+                    ) : (
+                      <View style={[styles.entryImage, styles.entryImagePlaceholder]}>
+                        <Text style={styles.entryImagePlaceholderText}>🍽️</Text>
+                      </View>
+                    )}
+                    <View style={styles.entryInfo}>
+                      <Text style={styles.entryName}>{food.name}</Text>
+                      <Text style={styles.entryTime}>{formatTime(food.timestamp)}</Text>
                     </View>
-                  )}
-                  <View style={styles.entryInfo}>
-                    <Text style={styles.entryName}>{entry.name}</Text>
-                    <Text style={styles.entryTime}>{formatTime(entry.timestamp)}</Text>
-                  </View>
-                  <Text style={styles.entryCalories}>{entry.calories} kcal</Text>
-                </TouchableOpacity>
-              ))}
+                    <Text style={styles.entryCalories}>{food.calories} kcal</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           ))
         )}
@@ -319,6 +447,23 @@ const styles = StyleSheet.create({
   daySection: {
     marginBottom: 24,
   },
+  burnedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF5F5',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 24,
+    gap: 8,
+  },
+  burnedText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  burnedValue: {
+    fontWeight: '700',
+    color: '#FF6B6B',
+  },
   dayHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -329,6 +474,21 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#1A1A2E',
+  },
+  dayStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  dayBurned: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  dayBurnedValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FF6B6B',
   },
   dayCalories: {
     flexDirection: 'row',
@@ -368,6 +528,23 @@ const styles = StyleSheet.create({
   },
   entryImagePlaceholderText: {
     fontSize: 24,
+  },
+  workoutIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  burnedCalories: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  burnedCaloriesText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FF6B6B',
   },
   entryInfo: {
     flex: 1,

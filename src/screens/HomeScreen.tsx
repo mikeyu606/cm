@@ -19,45 +19,85 @@ import { FoodEntry } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
-const RING_SIZE = width * 0.55;
-const STROKE_WIDTH = 12;
+const RING_SIZE = width * 0.65;
+const OUTER_STROKE_WIDTH = 10;
+const INNER_STROKE_WIDTH = 12;
+const RING_GAP = 18;
 
-// Circular Progress Ring Component
+// Dual Circular Progress Ring Component
 function CircularProgress({ 
   consumed, 
-  goal 
+  goal,
+  burned,
+  burnGoal,
+  netCalories,
 }: { 
   consumed: number; 
   goal: number;
+  burned: number;
+  burnGoal: number;
+  netCalories: number;
 }) {
-  const radius = (RING_SIZE - STROKE_WIDTH) / 2;
-  const circumference = 2 * Math.PI * radius;
+  // Outer ring (exercise/burned calories) - purple
+  const outerRadius = (RING_SIZE - OUTER_STROKE_WIDTH) / 2;
+  const outerCircumference = 2 * Math.PI * outerRadius;
+  const burnProgress = Math.min(burned / burnGoal, 1);
+  const burnOffset = outerCircumference * (1 - burnProgress);
   
-  // Calculate progress for each segment (simulating carbs, fat, protein)
+  // Inner ring (consumed calories) - green segments
+  const innerRadius = outerRadius - RING_GAP;
+  const innerCircumference = 2 * Math.PI * innerRadius;
+  
   const totalProgress = Math.min(consumed / goal, 1);
-  const carbsProgress = totalProgress * 0.4; // 40% carbs
-  const fatProgress = totalProgress * 0.3; // 30% fat  
-  const proteinProgress = totalProgress * 0.3; // 30% protein
+  const carbsProgress = totalProgress * 0.4;
+  const fatProgress = totalProgress * 0.3;
+  const proteinProgress = totalProgress * 0.3;
   
-  const carbsOffset = circumference * (1 - carbsProgress);
-  const fatOffset = circumference * (1 - fatProgress);
-  const proteinOffset = circumference * (1 - proteinProgress);
+  const carbsOffset = innerCircumference * (1 - carbsProgress);
+  const fatOffset = innerCircumference * (1 - fatProgress);
+  const proteinOffset = innerCircumference * (1 - proteinProgress);
   
-  // Rotation for each segment
-  const carbsRotation = -90; // Start at top
+  const carbsRotation = -90;
   const fatRotation = -90 + (carbsProgress * 360);
   const proteinRotation = -90 + ((carbsProgress + fatProgress) * 360);
+  
+  const isNegative = netCalories < 0;
 
   return (
     <View style={styles.ringContainer}>
       <Svg width={RING_SIZE} height={RING_SIZE}>
-        {/* Background circle */}
+        {/* Outer ring background (exercise) */}
         <Circle
           cx={RING_SIZE / 2}
           cy={RING_SIZE / 2}
-          r={radius}
+          r={outerRadius}
           stroke="#E8E8E8"
-          strokeWidth={STROKE_WIDTH}
+          strokeWidth={OUTER_STROKE_WIDTH}
+          fill="transparent"
+        />
+        
+        {/* Outer ring progress (exercise - purple) */}
+        <G rotation={-90} origin={`${RING_SIZE / 2}, ${RING_SIZE / 2}`}>
+          <Circle
+            cx={RING_SIZE / 2}
+            cy={RING_SIZE / 2}
+            r={outerRadius}
+            stroke="#B8A9C9"
+            strokeWidth={OUTER_STROKE_WIDTH}
+            fill="transparent"
+            strokeDasharray={outerCircumference}
+            strokeDashoffset={burnOffset}
+            strokeLinecap="round"
+          />
+        </G>
+        
+        {/* Inner ring background (calories) */}
+        <Circle
+          cx={RING_SIZE / 2}
+          cy={RING_SIZE / 2}
+          r={innerRadius}
+          stroke="#E8E8E8"
+          strokeWidth={INNER_STROKE_WIDTH}
           fill="transparent"
         />
         
@@ -66,11 +106,11 @@ function CircularProgress({
           <Circle
             cx={RING_SIZE / 2}
             cy={RING_SIZE / 2}
-            r={radius}
+            r={innerRadius}
             stroke="#A8E6CF"
-            strokeWidth={STROKE_WIDTH}
+            strokeWidth={INNER_STROKE_WIDTH}
             fill="transparent"
-            strokeDasharray={circumference}
+            strokeDasharray={innerCircumference}
             strokeDashoffset={carbsOffset}
             strokeLinecap="round"
           />
@@ -81,11 +121,11 @@ function CircularProgress({
           <Circle
             cx={RING_SIZE / 2}
             cy={RING_SIZE / 2}
-            r={radius}
+            r={innerRadius}
             stroke="#B8A9C9"
-            strokeWidth={STROKE_WIDTH}
+            strokeWidth={INNER_STROKE_WIDTH}
             fill="transparent"
-            strokeDasharray={circumference}
+            strokeDasharray={innerCircumference}
             strokeDashoffset={fatOffset}
             strokeLinecap="round"
           />
@@ -96,11 +136,11 @@ function CircularProgress({
           <Circle
             cx={RING_SIZE / 2}
             cy={RING_SIZE / 2}
-            r={radius}
+            r={innerRadius}
             stroke="#C5E8B7"
-            strokeWidth={STROKE_WIDTH}
+            strokeWidth={INNER_STROKE_WIDTH}
             fill="transparent"
-            strokeDasharray={circumference}
+            strokeDasharray={innerCircumference}
             strokeDashoffset={proteinOffset}
             strokeLinecap="round"
           />
@@ -109,15 +149,39 @@ function CircularProgress({
       
       {/* Center content */}
       <View style={styles.ringCenter}>
-        <View style={styles.ringIcon}>
-          <Text style={styles.ringIconText}>🌿</Text>
+        <View style={[styles.ringIcon, isNegative && styles.ringIconNegative]}>
+          <Text style={styles.ringIconText}>{isNegative ? '🔥' : '🌿'}</Text>
         </View>
         <Text style={styles.ringGoalText}>Of {goal.toLocaleString()} Kcal</Text>
-        <Text style={styles.ringConsumedText}>{consumed.toLocaleString()}</Text>
+        <Text style={[styles.ringConsumedText, isNegative && styles.ringConsumedNegative]}>
+          {netCalories.toLocaleString()}
+        </Text>
       </View>
       
       {/* Bottom dot indicator */}
       <View style={styles.dotIndicator} />
+      
+      {/* Legend */}
+      <View style={styles.ringLegend}>
+        <View style={styles.legendItem}>
+          <View style={[styles.legendDot, { backgroundColor: '#A8E6CF' }]} />
+          <Text style={styles.legendText}>Eaten</Text>
+        </View>
+        <View style={styles.legendItem}>
+          <View style={[styles.legendDot, { backgroundColor: '#B8A9C9' }]} />
+          <Text style={styles.legendText}>Burned</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// Streak Counter Component
+function StreakCounter({ streak }: { streak: number }) {
+  return (
+    <View style={styles.streakContainer}>
+      <Text style={styles.streakEmoji}>🔥</Text>
+      <Text style={styles.streakNumber}>{streak}</Text>
     </View>
   );
 }
@@ -195,13 +259,25 @@ function MealCard({
   );
 }
 
+interface WorkoutEntry {
+  id: string;
+  name: string;
+  caloriesBurned: number;
+  duration: number;
+  timestamp: Date;
+  workoutType: string;
+}
+
 export default function HomeScreen() {
   const { user, userProfile } = useAuth();
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const [entries, setEntries] = useState<FoodEntry[]>([]);
+  const [workouts, setWorkouts] = useState<WorkoutEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [totalCalories, setTotalCalories] = useState(0);
+  const [caloriesBurned, setCaloriesBurned] = useState(0);
+  const [streak, setStreak] = useState(7); // Mock streak - you can calculate from logged days
 
   const getTodayRange = () => {
     const now = new Date();
@@ -215,15 +291,17 @@ export default function HomeScreen() {
 
     try {
       const { startOfDay, endOfDay } = getTodayRange();
+      
+      // Fetch food entries
       const entriesRef = collection(db, 'foodEntries');
-      const q = query(
+      const foodQuery = query(
         entriesRef,
         where('userId', '==', user.uid)
       );
 
-      const snapshot = await getDocs(q);
+      const snapshot = await getDocs(foodQuery);
       const fetchedEntries: FoodEntry[] = [];
-      let total = 0;
+      let totalEaten = 0;
 
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
@@ -240,13 +318,45 @@ export default function HomeScreen() {
             notes: data.notes,
           };
           fetchedEntries.push(entry);
-          total += data.calories;
+          totalEaten += data.calories;
         }
       });
 
       fetchedEntries.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
       setEntries(fetchedEntries);
-      setTotalCalories(total);
+      setTotalCalories(totalEaten);
+
+      // Fetch workouts
+      const workoutsRef = collection(db, 'workouts');
+      const workoutQuery = query(
+        workoutsRef,
+        where('userId', '==', user.uid)
+      );
+
+      const workoutSnapshot = await getDocs(workoutQuery);
+      const fetchedWorkouts: WorkoutEntry[] = [];
+      let totalBurned = 0;
+
+      workoutSnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const timestamp = data.timestamp?.toDate?.() || new Date(data.timestamp);
+        
+        if (timestamp >= startOfDay && timestamp < endOfDay) {
+          fetchedWorkouts.push({
+            id: docSnap.id,
+            name: data.name,
+            caloriesBurned: data.caloriesBurned,
+            duration: data.duration,
+            timestamp: timestamp,
+            workoutType: data.type,
+          });
+          totalBurned += data.caloriesBurned;
+        }
+      });
+
+      fetchedWorkouts.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      setWorkouts(fetchedWorkouts);
+      setCaloriesBurned(totalBurned);
     } catch (error) {
       console.error('Error fetching entries:', error);
     }
@@ -269,11 +379,13 @@ export default function HomeScreen() {
   };
 
   const dailyGoal = userProfile?.dailyGoal || 2000;
+  const burnGoal = 500; // Daily burn goal
+  const netCalories = totalCalories - caloriesBurned;
   
   // Calculate mock macro values based on calories
-  const carbsValue = Math.round((totalCalories * 0.4) / 4); // 4 cal per gram
-  const fatValue = Math.round((totalCalories * 0.3) / 9); // 9 cal per gram
-  const proteinValue = Math.round((totalCalories * 0.3) / 4); // 4 cal per gram
+  const carbsValue = Math.round((totalCalories * 0.4) / 4);
+  const fatValue = Math.round((totalCalories * 0.3) / 9);
+  const proteinValue = Math.round((totalCalories * 0.3) / 4);
 
   // Calculate meal calories
   const breakfastCals = entries
@@ -299,13 +411,17 @@ export default function HomeScreen() {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Tracker</Text>
-          <TouchableOpacity style={styles.editButton}>
-            <Text style={styles.editButtonText}>Edit</Text>
-          </TouchableOpacity>
+          <StreakCounter streak={streak} />
         </View>
 
-        {/* Circular Progress */}
-        <CircularProgress consumed={totalCalories} goal={dailyGoal} />
+        {/* Circular Progress with dual rings */}
+        <CircularProgress 
+          consumed={totalCalories} 
+          goal={dailyGoal}
+          burned={caloriesBurned}
+          burnGoal={burnGoal}
+          netCalories={netCalories}
+        />
 
         {/* Macro Cards */}
         <View style={styles.macroContainer}>
@@ -368,9 +484,41 @@ export default function HomeScreen() {
         </View>
 
         {/* Today's Entries (if any) */}
-        {entries.length > 0 && (
+        {(entries.length > 0 || workouts.length > 0) && (
           <View style={styles.entriesSection}>
             <Text style={styles.mealsTitle}>Today's Log</Text>
+            
+            {/* Workouts */}
+            {workouts.map((workout) => (
+              <TouchableOpacity 
+                key={workout.id} 
+                style={styles.entryItem}
+                onLongPress={() => {
+                  Alert.alert('Delete', 'Delete this workout?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { 
+                      text: 'Delete', 
+                      style: 'destructive',
+                      onPress: async () => {
+                        await deleteDoc(doc(db, 'workouts', workout.id));
+                        fetchTodayEntries();
+                      }
+                    },
+                  ]);
+                }}
+              >
+                <View style={[styles.entryDot, styles.workoutDot]} />
+                <View style={styles.entryInfo}>
+                  <Text style={styles.entryName}>{workout.name}</Text>
+                  <Text style={styles.entryTime}>
+                    {Math.floor(workout.duration / 60)} min • {workout.timestamp.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                  </Text>
+                </View>
+                <Text style={styles.workoutCalories}>-{workout.caloriesBurned} kcal</Text>
+              </TouchableOpacity>
+            ))}
+            
+            {/* Food entries */}
             {entries.map((entry) => (
               <TouchableOpacity 
                 key={entry.id} 
@@ -421,30 +569,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 10,
   },
   title: {
     fontSize: 28,
     fontWeight: '700',
     color: '#1A1A2E',
   },
-  editButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+  streakContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF3E0',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: '#E0E0E0',
-    backgroundColor: '#fff',
+    gap: 4,
   },
-  editButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
+  streakEmoji: {
+    fontSize: 18,
+  },
+  streakNumber: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#E65100',
   },
   ringContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 20,
+    marginVertical: 10,
     position: 'relative',
   },
   ringCenter: {
@@ -473,18 +625,45 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1A1A2E',
   },
+  ringConsumedNegative: {
+    color: '#22C55E',
+  },
+  ringIconNegative: {
+    backgroundColor: '#FF6B6B',
+  },
   dotIndicator: {
     width: 10,
     height: 10,
     borderRadius: 5,
     backgroundColor: '#1A1A2E',
     position: 'absolute',
-    bottom: -5,
+    bottom: 25,
+  },
+  ringLegend: {
+    flexDirection: 'row',
+    gap: 20,
+    marginTop: 15,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  legendText: {
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '500',
   },
   macroContainer: {
     flexDirection: 'row',
     gap: 10,
     marginBottom: 30,
+    marginTop: 10,
   },
   macroCard: {
     flex: 1,
@@ -642,5 +821,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#1A1A2E',
+  },
+  workoutDot: {
+    backgroundColor: '#FF6B6B',
+  },
+  workoutCalories: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FF6B6B',
   },
 });

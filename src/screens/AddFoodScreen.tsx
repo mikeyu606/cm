@@ -11,14 +11,20 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Dimensions,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { collection, addDoc, Timestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../config/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { analyzeFoodImage, FoodAnalysisResult } from '../config/openai';
+
+const { width } = Dimensions.get('window');
 
 type RouteParams = {
   AddFoodModal: {
@@ -37,10 +43,45 @@ export default function AddFoodScreen() {
   const [calories, setCalories] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<FoodAnalysisResult | null>(null);
+
+  // Analyze photo with AI
+  const analyzePhoto = async (uri: string) => {
+    setAnalyzing(true);
+    try {
+      // Convert image to base64 for OpenAI Vision API
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: 'base64',
+      });
+      
+      // Call AI vision API
+      const result = await analyzeFoodImage(base64);
+      setAnalysisResult(result);
+      
+      // Pre-fill the form with AI results
+      if (result.foodName && result.foodName !== 'Unknown Food') {
+        setFoodName(result.foodName);
+      }
+      if (result.calories > 0) {
+        setCalories(result.calories.toString());
+      }
+      if (result.description) {
+        setNotes(result.description);
+      }
+    } catch (error) {
+      console.error('Error analyzing photo:', error);
+      // Don't show error - user can still manually enter
+    } finally {
+      setAnalyzing(false);
+    }
+  };
 
   useEffect(() => {
     if (route.params?.photoUri) {
       setPhotoUri(route.params.photoUri);
+      // Auto-analyze the photo
+      analyzePhoto(route.params.photoUri);
     }
   }, [route.params?.photoUri]);
 
@@ -53,7 +94,10 @@ export default function AddFoodScreen() {
     });
 
     if (!result.canceled) {
-      setPhotoUri(result.assets[0].uri);
+      const uri = result.assets[0].uri;
+      setPhotoUri(uri);
+      // Analyze the picked image
+      analyzePhoto(uri);
     }
   };
 
@@ -117,19 +161,29 @@ export default function AddFoodScreen() {
     }
   };
 
-  const handleClose = () => {
+  const handleBack = () => {
     navigation.goBack();
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-          <Text style={styles.closeButtonText}>✕</Text>
+    <View style={styles.container}>
+      {/* Header - Instagram style */}
+      <View style={[styles.header, { paddingTop: insets.top }]}>
+        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={28} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Add Food</Text>
-        <View style={{ width: 44 }} />
+        <Text style={styles.headerTitle}>New post</Text>
+        <TouchableOpacity 
+          onPress={handleSave} 
+          disabled={saving}
+          style={styles.nextButton}
+        >
+          {saving ? (
+            <ActivityIndicator size="small" color="#0095F6" />
+          ) : (
+            <Text style={styles.nextButtonText}>Share</Text>
+          )}
+        </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView 
@@ -138,103 +192,120 @@ export default function AddFoodScreen() {
       >
         <ScrollView 
           style={styles.scrollView}
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 20 }]}
+          contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Photo Section */}
-          <View style={styles.photoSection}>
-            {photoUri ? (
-              <View style={styles.photoPreviewContainer}>
-                <Image source={{ uri: photoUri }} style={styles.photoPreview} />
-                <TouchableOpacity
-                  style={styles.removePhotoButton}
-                  onPress={() => setPhotoUri(null)}
-                >
-                  <Text style={styles.removePhotoText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.photoButtons}>
-                <TouchableOpacity 
-                  style={styles.photoButton} 
-                  onPress={() => navigation.goBack()}
-                >
-                  <Text style={styles.photoButtonEmoji}>📷</Text>
-                  <Text style={styles.photoButtonText}>Take Photo</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity style={styles.photoButton} onPress={pickImage}>
-                  <Text style={styles.photoButtonEmoji}>🖼️</Text>
-                  <Text style={styles.photoButtonText}>Gallery</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
+          {/* Photo Section - Edge to edge like Instagram */}
+          {photoUri ? (
+            <View style={styles.photoContainer}>
+              <Image 
+                source={{ uri: photoUri }} 
+                style={styles.photo}
+                resizeMode="cover"
+              />
+              {analyzing && (
+                <View style={styles.analyzingOverlay}>
+                  <ActivityIndicator size="large" color="#fff" />
+                  <Text style={styles.analyzingText}>Analyzing food...</Text>
+                </View>
+              )}
+              {analysisResult && !analyzing && (
+                <View style={styles.aiResultBadge}>
+                  <Ionicons name="sparkles" size={14} color="#fff" />
+                  <Text style={styles.aiResultText}>
+                    AI Estimated • {analysisResult.confidence} confidence
+                  </Text>
+                </View>
+              )}
+              <TouchableOpacity
+                style={styles.removePhotoButton}
+                onPress={() => {
+                  setPhotoUri(null);
+                  setAnalysisResult(null);
+                  setFoodName('');
+                  setCalories('');
+                  setNotes('');
+                }}
+              >
+                <Ionicons name="close" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.photoPlaceholder}>
+              <TouchableOpacity 
+                style={styles.photoButton} 
+                onPress={handleBack}
+              >
+                <Ionicons name="camera-outline" size={40} color="#999" />
+                <Text style={styles.photoButtonText}>Take Photo</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.photoButton} onPress={pickImage}>
+                <Ionicons name="images-outline" size={40} color="#999" />
+                <Text style={styles.photoButtonText}>Gallery</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Form Fields */}
           <View style={styles.form}>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Food Name *</Text>
+            <View style={styles.inputRow}>
+              <Text style={styles.inputLabel}>Food</Text>
               <TextInput
                 style={styles.input}
                 value={foodName}
                 onChangeText={setFoodName}
-                placeholder="e.g., Grilled Chicken Salad"
+                placeholder="What did you eat?"
                 placeholderTextColor="#999"
               />
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Calories *</Text>
+            <View style={styles.divider} />
+
+            <View style={styles.inputRow}>
+              <Text style={styles.inputLabel}>Calories</Text>
               <TextInput
                 style={styles.input}
                 value={calories}
                 onChangeText={setCalories}
-                placeholder="e.g., 350"
+                placeholder="Enter calories"
                 placeholderTextColor="#999"
                 keyboardType="numeric"
               />
             </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Notes (optional)</Text>
+            <View style={styles.divider} />
+
+            <View style={styles.inputRow}>
+              <Text style={styles.inputLabel}>Notes</Text>
               <TextInput
-                style={[styles.input, styles.notesInput]}
+                style={styles.input}
                 value={notes}
                 onChangeText={setNotes}
-                placeholder="Any additional notes..."
+                placeholder="Add notes (optional)"
                 placeholderTextColor="#999"
-                multiline
-                numberOfLines={3}
               />
             </View>
-          </View>
 
-          {/* Save Button */}
-          <TouchableOpacity
-            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-            onPress={handleSave}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.saveButtonText}>Save Entry</Text>
-            )}
-          </TouchableOpacity>
+            <View style={styles.divider} />
+          </View>
 
           {/* Quick Add Suggestions */}
           <View style={styles.suggestionsSection}>
             <Text style={styles.suggestionsTitle}>Quick Add</Text>
-            <View style={styles.suggestions}>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.suggestionsScroll}
+            >
               {[
                 { name: 'Apple', cal: '95', emoji: '🍎' },
                 { name: 'Banana', cal: '105', emoji: '🍌' },
                 { name: 'Coffee', cal: '5', emoji: '☕' },
                 { name: 'Egg', cal: '78', emoji: '🥚' },
                 { name: 'Toast', cal: '80', emoji: '🍞' },
-                { name: 'Yogurt', cal: '150', emoji: '🥛' },
+                { name: 'Salad', cal: '150', emoji: '🥗' },
               ].map((item) => (
                 <TouchableOpacity
                   key={item.name}
@@ -246,10 +317,10 @@ export default function AddFoodScreen() {
                 >
                   <Text style={styles.suggestionEmoji}>{item.emoji}</Text>
                   <Text style={styles.suggestionText}>{item.name}</Text>
-                  <Text style={styles.suggestionCal}>{item.cal}</Text>
+                  <Text style={styles.suggestionCal}>{item.cal} cal</Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -260,35 +331,38 @@ export default function AddFoodScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAFAFA',
+    backgroundColor: '#fff',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 4,
+    paddingBottom: 12,
     backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#DBDBDB',
   },
-  closeButton: {
-    width: 44,
+  backButton: {
+    width: 50,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: '#F5F5F5',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  closeButtonText: {
-    color: '#666',
-    fontSize: 18,
-    fontWeight: '600',
-  },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1A1A2E',
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+  },
+  nextButton: {
+    paddingHorizontal: 16,
+    height: 44,
+    justifyContent: 'center',
+  },
+  nextButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0095F6',
   },
   content: {
     flex: 1,
@@ -297,140 +371,137 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    padding: 20,
+    paddingBottom: 100,
   },
-  photoSection: {
-    marginBottom: 24,
-  },
-  photoButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  photoButton: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 28,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#E8E8E8',
-    borderStyle: 'dashed',
-  },
-  photoButtonEmoji: {
-    fontSize: 36,
-    marginBottom: 10,
-  },
-  photoButtonText: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '600',
-  },
-  photoPreviewContainer: {
+  photoContainer: {
+    width: width,
+    aspectRatio: 1,
+    backgroundColor: '#000',
     position: 'relative',
   },
-  photoPreview: {
+  photo: {
     width: '100%',
-    height: 220,
+    height: '100%',
+  },
+  analyzingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  analyzingText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
+  },
+  aiResultBadge: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#E8E8E8',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  aiResultText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
   },
   removePhotoButton: {
     position: 'absolute',
     top: 12,
     right: 12,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  removePhotoText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+  photoPlaceholder: {
+    width: width,
+    aspectRatio: 1,
+    backgroundColor: '#FAFAFA',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 40,
   },
-  form: {
-    gap: 20,
-    marginBottom: 24,
-  },
-  inputContainer: {
+  photoButton: {
+    alignItems: 'center',
     gap: 8,
   },
-  label: {
+  photoButtonText: {
     fontSize: 14,
-    fontWeight: '600',
     color: '#666',
-    marginLeft: 4,
+    fontWeight: '500',
+  },
+  form: {
+    paddingTop: 8,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  inputLabel: {
+    width: 70,
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#000',
   },
   input: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: '#1A1A2E',
-    borderWidth: 1,
-    borderColor: '#E8E8E8',
+    flex: 1,
+    fontSize: 15,
+    color: '#000',
   },
-  notesInput: {
-    height: 100,
-    textAlignVertical: 'top',
-  },
-  saveButton: {
-    backgroundColor: '#F97316',
-    borderRadius: 14,
-    padding: 18,
-    alignItems: 'center',
-    marginBottom: 32,
-    shadowColor: '#F97316',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  saveButtonDisabled: {
-    opacity: 0.7,
-  },
-  saveButtonText: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '700',
+  divider: {
+    height: 0.5,
+    backgroundColor: '#EFEFEF',
+    marginLeft: 16,
   },
   suggestionsSection: {
-    marginTop: 8,
+    paddingTop: 20,
+    paddingBottom: 20,
   },
   suggestionsTitle: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#888',
-    marginBottom: 14,
+    color: '#999',
+    paddingHorizontal: 16,
+    marginBottom: 12,
   },
-  suggestions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  suggestionsScroll: {
+    paddingHorizontal: 16,
     gap: 10,
   },
   suggestionChip: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FAFAFA',
     borderRadius: 12,
     paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: '#E8E8E8',
-    flexDirection: 'row',
+    paddingHorizontal: 16,
     alignItems: 'center',
-    gap: 8,
+    marginRight: 10,
+    minWidth: 80,
   },
   suggestionEmoji: {
-    fontSize: 18,
+    fontSize: 24,
+    marginBottom: 4,
   },
   suggestionText: {
-    color: '#1A1A2E',
-    fontSize: 14,
+    color: '#000',
+    fontSize: 13,
     fontWeight: '500',
   },
   suggestionCal: {
-    color: '#888',
-    fontSize: 13,
+    color: '#999',
+    fontSize: 11,
+    marginTop: 2,
   },
 });

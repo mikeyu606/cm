@@ -42,8 +42,8 @@ export default function ScannerScreen() {
         });
         if (photo) {
           setPhotoUri(photo.uri);
-          // Navigate to AddFood screen with the photo
-          navigation.navigate('AddFoodModal' as never, { photoUri: photo.uri } as never);
+          // Replace Scanner with AddFood screen (keeps the photo)
+          navigation.replace('AddFoodModal' as never, { photoUri: photo.uri } as never);
         }
       } catch (error) {
         console.error('Error taking photo:', error);
